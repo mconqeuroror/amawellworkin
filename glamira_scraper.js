@@ -440,11 +440,21 @@ const scrapeFromUrl = async (targetUrl, browser = null) => {
       if (!browser) {
         localBrowser = await puppeteer.launch({
           headless: 'new',
-          args: ['--no-sandbox', '--disable-setuid-sandbox'],
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process',
+            '--disable-gpu'
+          ],
+          executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/app/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
         });
       }
       const page = await (browser || localBrowser).newPage();
-
+      // ... rest of the function remains unchanged
       await page.setUserAgent(getRandomUserAgent());
       await page.setViewport(getRandomViewport());
 

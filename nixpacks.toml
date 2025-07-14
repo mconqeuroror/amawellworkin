@@ -1,39 +1,29 @@
 [phases.setup]
 nixPkgs = [
   'nodejs-18_x',
-  'chromium', 
+  'npm-8_x',
+  'chromium',
   'nss',
   'freetype',
-  'freetype-dev',
-  'harfbuzz',
-  'ca-certificates',
-  'ttf-freefont',
   'fontconfig',
-  'wqy_zenhei',
-  'glib',
-  'gtk3',
-  'libdrm',
+  'libx11',
   'libxcomposite',
   'libxdamage',
   'libxrandr',
   'libgbm',
   'libxss',
-  'libasound2'
+  'libasound'
 ]
 
 [phases.install]
-cmds = ['npm ci --only=production']
+cmds = ['npm ci --omit=dev']
 
 [phases.build]
-cmds = [
-  'npx puppeteer browsers install chrome',
-  'chmod -R 755 /root/.cache/puppeteer'
-]
-
-[variables]
-PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'false'
-PUPPETEER_EXECUTABLE_PATH = '/nix/store/*/bin/chromium'
-NODE_ENV = 'production'
+cmds = []
 
 [start]
 cmd = 'node glamira_scraper.js'
+
+[variables]
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'false'
+NODE_ENV = 'production'

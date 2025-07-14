@@ -6,7 +6,6 @@
   "scripts": {
     "start": "node glamira_scraper.js",
     "build": "npm install",
-    "postinstall": "npx puppeteer browsers install chrome@latest"
   },
   "dependencies": {
     "cheerio": "^1.0.0",

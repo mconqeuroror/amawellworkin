@@ -5,7 +5,7 @@
   "main": "glamira_scraper.js",
   "scripts": {
     "start": "node glamira_scraper.js",
-    "build": "npm install",
+    "build": "npm install"
   },
   "dependencies": {
     "cheerio": "^1.0.0",

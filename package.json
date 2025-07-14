@@ -5,8 +5,7 @@
   "main": "glamira_scraper.js",
   "scripts": {
     "start": "node glamira_scraper.js",
-    "build": "npm install && npx puppeteer browsers install chrome@127.0.6533.88"
-    "postinstall": "if [ \"$NODE_ENV\" = \"production\" ]; then apt-get update && apt-get install -y chromium-browser; fi"
+    "build": "npm ci --omit=dev"
   },
   "dependencies": {
     "cheerio": "^1.0.0",
@@ -17,6 +16,6 @@
     "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": "18.x"
   }
 }

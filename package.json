@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node glamira_scraper.js",
     "build": "npm install && npx puppeteer browsers install chrome@127.0.6533.88"
+    "postinstall": "if [ \"$NODE_ENV\" = \"production\" ]; then apt-get update && apt-get install -y chromium-browser; fi"
   },
   "dependencies": {
     "cheerio": "^1.0.0",

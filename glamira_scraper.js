@@ -10,7 +10,88 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+
+// Add request body validation middleware
+app.use((req, res, next) => {
+  if (req.method === 'POST' && req.is('application/json')) {
+    if (!req.body || typeof req.body !== 'object') {
+      return res.status(400).json({ error: 'Invalid JSON in request body' });
+    }
+  }
+  next();
+});
+
+// Railway-compatible Puppeteer configuration
+const getPuppeteerConfig = () => {
+  const config = {
+    headless: 'new',
+    defaultViewport: null,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      '--disable-gpu',
+      '--disable-web-security',
+      '--disable-features=VizDisplayCompositor',
+      '--disable-extensions',
+      '--disable-plugins',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-features=TranslateUI',
+      '--disable-ipc-flooding-protection',
+      '--window-size=1920,1080',
+      '--disable-blink-features=AutomationControlled',
+      '--memory-pressure-off',
+      '--max_old_space_size=4096'
+    ],
+    ignoreHTTPSErrors: true,
+    timeout: 30000
+  };
+  return config;
+};
+
+// Global browser instance management
+let globalBrowser = null;
+let browserInitializing = false;
+
+const getBrowser = async () => {
+  if (globalBrowser && globalBrowser.connected) {
+    return globalBrowser;
+  }
+
+  if (browserInitializing) {
+    // Wait for browser to finish initializing
+    while (browserInitializing) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return globalBrowser;
+  }
+
+  browserInitializing = true;
+  try {
+    console.log('Launching new browser instance...');
+    globalBrowser = await puppeteer.launch(getPuppeteerConfig());
+    
+    globalBrowser.on('disconnected', () => {
+      console.log('Browser disconnected');
+      globalBrowser = null;
+    });
+
+    console.log('Browser launched successfully');
+    return globalBrowser;
+  } catch (error) {
+    console.error('Failed to launch browser:', error);
+    throw error;
+  } finally {
+    browserInitializing = false;
+  }
+};
 
 const getSubcategory = (url) => {
   try {
@@ -47,17 +128,21 @@ const delay = (ms, condition = null) => new Promise((resolve) => {
   if (!condition) return setTimeout(resolve, ms);
   const start = Date.now();
   const check = async () => {
-    if (await condition()) resolve();
-    else if (Date.now() - start < ms) setTimeout(check, 50);
-    else resolve();
+    try {
+      if (await condition()) resolve();
+      else if (Date.now() - start < ms) setTimeout(check, 50);
+      else resolve();
+    } catch {
+      resolve(); // Resolve on error to avoid hanging
+    }
   };
   check();
 });
 
 const getRandomUserAgent = () => {
   const userAgents = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
   ];
   return userAgents[Math.floor(Math.random() * userAgents.length)];
@@ -141,9 +226,14 @@ const checkForCaptcha = async (page) => {
     '#recaptcha[style*="visibility: visible"]',
   ];
   for (const selector of captchaSelectors) {
-    if (await page.$(selector)) {
-      console.warn(`CAPTCHA detected with selector: ${selector}`);
-      return true;
+    try {
+      const element = await page.$(selector);
+      if (element) {
+        console.warn(`CAPTCHA detected with selector: ${selector}`);
+        return true;
+      }
+    } catch (error) {
+      console.warn(`Error checking CAPTCHA for selector ${selector}: ${error.message}`);
     }
   }
   console.log('No visible CAPTCHA detected.');
@@ -152,6 +242,10 @@ const checkForCaptcha = async (page) => {
 
 const simulateHumanBehavior = async (page) => {
   try {
+    if (page.isClosed()) {
+      console.warn('Page is closed, skipping human behavior simulation');
+      return;
+    }
     await page.mouse.move(Math.random() * 300, Math.random() * 300);
     await page.evaluate(() => window.scrollBy(0, 200));
     console.log('Simulated human behavior.');
@@ -170,22 +264,30 @@ const detectPlaceholders = async (page) => {
 
   const detectedPlaceholders = [];
   for (const placeholder of placeholders) {
-    const elements = await page.$$(placeholder.selector);
-    if (elements.length > 0) {
-      const productCount = await page.$$eval(`${placeholder.selector} .product-item-info, ${placeholder.selector}`, items => items.length);
-      console.log(`Detected placeholder: ${placeholder.label} with selector: ${placeholder.selector} (${elements.length} elements, ${productCount} potential products)`);
-      if (productCount > 0) {
-        detectedPlaceholders.push(placeholder);
-      } else {
-        console.warn(`No potential products found in ${placeholder.label}. Skipping.`);
+    try {
+      const elements = await page.$$(placeholder.selector);
+      if (elements.length > 0) {
+        const productCount = await page.$$eval(`${placeholder.selector} .product-item-info, ${placeholder.selector}`, items => items.length);
+        console.log(`Detected placeholder: ${placeholder.label} with selector: ${placeholder.selector} (${elements.length} elements, ${productCount} potential products)`);
+        if (productCount > 0) {
+          detectedPlaceholders.push(placeholder);
+        } else {
+          console.warn(`No potential products found in ${placeholder.label}. Skipping.`);
+        }
       }
+    } catch (error) {
+      console.warn(`Error detecting placeholder ${placeholder.label}: ${error.message}`);
     }
   }
 
   if (detectedPlaceholders.length === 0) {
     console.warn('No product placeholders with products detected.');
-    const potentialContainers = await page.$$eval('div[class*="product"], div[class*="item"], div[class*="slider"]', containers => containers.map(c => c.outerHTML.substring(0, 200)));
-    console.log('Potential product containers:', potentialContainers);
+    try {
+      const potentialContainers = await page.$$eval('div[class*="product"], div[class*="item"], div[class*="slider"]', containers => containers.map(c => c.outerHTML.substring(0, 200)));
+      console.log('Potential product containers:', potentialContainers);
+    } catch (error) {
+      console.warn('Error listing potential containers:', error.message);
+    }
   }
   return detectedPlaceholders;
 };
@@ -207,7 +309,7 @@ const scrapeProducts = (html, structure, maxProducts = 10) => {
     const product = { placeholder: structure.label };
     const productLink = $(element).find('.product-link.img-product, a.product-link, a[href*="/product/"], a.product-item-link').first();
     product.product_id = productLink.data('product_id') || $(element).data('product_id') || $(element).find('[data-product-id]').data('product_id') || '';
-    product.title = productLink.attr('title') || $(element).find('.product-name, .product-item-name, h2, h3, a.product-item-name').text().trim() || '';
+    product.title =istere productLink.attr('title') || $(element).find('.product-name, .product-item-name, h2, h3, a.product-item-name').text().trim() || '';
     product.url = productLink.attr('href') || '';
     product.alloy = productLink.data('param')?.alloy || $(element).data('param')?.alloy || '';
 
@@ -219,7 +321,7 @@ const scrapeProducts = (html, structure, maxProducts = 10) => {
     }
     productIds.add(uniqueKey);
 
-    product.short_description = $(element).find('.short-description, .product-description').text().trim() || '';
+    product.short_description = Fluent $(element).find('.short-description, .product-description').text().trim() || '';
     product.carat = $(element).find('.info_stone_total .carat, .carat').text().trim() || '';
     product.price = $(element).find('.price, .price-box .price').text().trim() || '';
     product.price_range = $(element).find('.price-range span, .price-range').text().trim() || '';
@@ -280,35 +382,44 @@ const scrapeAllPlaceholders = async (page) => {
 
     // Initial scroll for Best Sellers to trigger loading
     if (structure.type === 'best-sellers') {
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await delay(3000);
-      await page.waitForSelector(`${structure.selector} img:not(.skeleton)`, { timeout: 10000 }).catch(() => {
-        console.warn(`No non-skeleton images found in ${structure.label} after initial scroll.`);
-      });
+      try {
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await delay(3000);
+        await page.waitForSelector(`${structure.selector} img:not(.skeleton)`, { timeout: 10000 }).catch(() => {
+          console.warn(`No non-skeleton images found in ${structure.label} after initial scroll.`);
+        });
+      } catch (error) {
+        console.warn(`Error during initial scroll for ${structure.label}: ${error.message}`);
+      }
     }
 
     // Scrape with retries
     while (attempt < maxAttempts && products.length < maxProducts) {
-      await page.waitForSelector(structure.selector, { timeout: 10000 }).catch(() => {
-        console.warn(`Placeholder ${structure.label} not found within 10 seconds.`);
-      });
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await delay(3000);
-      await page.evaluate(() => {
-        const event = new Event('scroll');
-        window.dispatchEvent(event);
-      });
-      await page.waitForSelector(`${structure.selector} img:not(.skeleton)`, { timeout: 10000 }).catch(() => {
-        console.warn(`No non-skeleton images found in ${structure.label}.`);
-      });
-      let html = await page.content();
-      products = scrapeProducts(html, structure, maxProducts);
-      if (products.length > 0) {
-        console.log(`Found ${products.length} products in ${structure.label} on attempt ${attempt + 1}.`);
-        break;
+      try {
+        await page.waitForSelector(structure.selector, { timeout: 10000 }).catch(() => {
+          console.warn(`Placeholder ${structure.label} not found within 10 seconds.`);
+        });
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await delay(3000);
+        await page.evaluate(() => {
+          const event = new Event('scroll');
+          window.dispatchEvent(event);
+        });
+        await page.waitForSelector(`${structure.selector} img:not(.skeleton)`, { timeout: 10000 }).catch(() => {
+          console.warn(`No non-skeleton images found in ${structure.label}.`);
+        });
+        let html = await page.content();
+        products = scrapeProducts(html, structure, maxProducts);
+        if (products.length > 0) {
+          console.log(`Found ${products.length} products in ${structure.label} on attempt ${attempt + 1}.`);
+          break;
+        }
+        console.log(`No valid products found in ${structure.label} on attempt ${attempt + 1}. Retrying...`);
+        attempt++;
+      } catch (error) {
+        console.warn(`Error scraping ${structure.label} on attempt ${attempt + 1}: ${error.message}`);
+        attempt++;
       }
-      console.log(`No valid products found in ${structure.label} on attempt ${attempt + 1}. Retrying...`);
-      attempt++;
     }
 
     // Handle carousel navigation for New Arrivals and Best Sellers
@@ -345,14 +456,13 @@ const scrapeAllPlaceholders = async (page) => {
             await page.waitForSelector(`${structure.selector} img:not(.skeleton)`, { timeout: 10000 }).catch(() => {
               console.warn(`No non-skeleton images found after click in ${structure.label}.`);
             });
-            html = await page.content();
+            let html = await page.content();
             const newProducts = scrapeProducts(html, structure, maxProducts - products.length);
             const productIds = new Set(products.map(p => p.product_id || p.url));
             products = [
               ...products,
               ...newProducts.filter(p => !productIds.has(p.product_id || p.url))
             ];
-            // Clear and rebuild productIds set - THIS WAS THE CRITICAL FIX
             productIds.clear();
             products.forEach(p => productIds.add(p.product_id || p.url));
             if (products.length >= maxProducts) break;
@@ -398,14 +508,13 @@ const scrapeAllPlaceholders = async (page) => {
           await page.waitForSelector(`${structure.selector} img:not(.skeleton)`, { timeout: 10000 }).catch(() => {
             console.warn(`No non-skeleton images found after pagination in ${structure.label}.`);
           });
-          html = await page.content();
+          let html = await page.content();
           const newProducts = scrapeProducts(html, structure, maxProducts - products.length);
           const productIds = new Set(products.map(p => p.product_id || p.url));
           products = [
             ...products,
             ...newProducts.filter(p => !productIds.has(p.product_id || p.url))
           ];
-          // Clear and rebuild productIds set - THIS WAS THE CRITICAL FIX
           productIds.clear();
           products.forEach(p => productIds.add(p.product_id || p.url));
           if (products.length >= maxProducts) break;
@@ -425,25 +534,19 @@ const scrapeAllPlaceholders = async (page) => {
   return allProducts;
 };
 
-const scrapeFromUrl = async (targetUrl, browser = null) => {
+const scrapeFromUrl = async (targetUrl) => {
   if (!isValidUrl(targetUrl) || !targetUrl.includes('glamira.sk')) {
     throw new Error(`Invalid Glamira URL: ${targetUrl}`);
   }
 
-  let localBrowser;
-  let attempt = 0;
-  const retries = 2;
+  let page = null;
+  const maxRetries = 3;
 
-  while (attempt <= retries) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      console.log(`Attempt ${attempt + 1}: Navigating to ${targetUrl}`);
-      if (!browser) {
-        localBrowser = await puppeteer.launch({
-          headless: 'new',
-          args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        });
-      }
-      const page = await (browser || localBrowser).newPage();
+      console.log(`Attempt ${attempt + 1}/${maxRetries}: Navigating to ${targetUrl}`);
+      const browser = await getBrowser();
+      page = await browser.newPage();
 
       await page.setUserAgent(getRandomUserAgent());
       await page.setViewport(getRandomViewport());
@@ -461,7 +564,9 @@ const scrapeFromUrl = async (targetUrl, browser = null) => {
           'googletagmanager.com',
           'google-analytics.com',
         ];
-        if (blockDomains.some((domain) => request.url().includes(domain))) {
+        const resourceType = request.resourceType();
+        if (blockDomains.some((domain) => request.url().includes(domain)) ||
+            ['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
           request.abort();
         } else {
           request.continue();
@@ -476,10 +581,7 @@ const scrapeFromUrl = async (targetUrl, browser = null) => {
         }
       });
 
-      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-      if (!finalUrl.includes('glamira.sk')) {
-        throw new Error('Navigation ended on incorrect domain');
-      }
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
       if (await checkForCaptcha(page)) {
         throw new Error('CAPTCHA detected');
@@ -510,20 +612,20 @@ const scrapeFromUrl = async (targetUrl, browser = null) => {
         scraped_url: targetUrl,
         total_products: products.length,
         products: products,
+        timestamp: new Date().toISOString(),
+        success: true
       };
 
-      await page.close();
       return outputData;
     } catch (error) {
       console.error(`Attempt ${attempt + 1} failed: ${error.message}`);
-      attempt++;
-      if (attempt > retries) {
-        throw new Error(`Failed after ${retries + 1} attempts: ${error.message}`);
+      if (attempt === maxRetries - 1) {
+        throw new Error(`Failed after ${maxRetries} attempts: ${error.message}`);
       }
-      await delay(2000);
+      await delay(2000 * (attempt + 1)); // Exponential backoff
     } finally {
-      if (localBrowser) {
-        await localBrowser.close();
+      if (page && !page.isClosed()) {
+        await page.close().catch(() => {});
       }
     }
   }
@@ -531,25 +633,64 @@ const scrapeFromUrl = async (targetUrl, browser = null) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    memory: process.memoryUsage()
+  });
 });
 
 // Main scraping endpoint
 app.post('/scrape', async (req, res) => {
-  const { url } = req.body;
-
-  if (!url) {
-    return res.status(400).json({ error: 'URL is required' });
-  }
+  const startTime = Date.now();
 
   try {
+    const { url } = req.body;
+
+    if (!url) {
+      return res.status(400).json({ 
+        error: 'URL is required',
+        timestamp: new Date().toISOString()
+      });
+    }
+
     console.log(`Starting scraping for ${url}`);
     const outputData = await scrapeFromUrl(url);
-    res.json(outputData);
+    
+    const duration = Date.now() - startTime;
+    console.log(`Scraping completed in ${duration}ms`);
+    
+    res.json({
+      ...outputData,
+      duration: duration
+    });
   } catch (error) {
-    console.error(`Scraping failed for ${url}: ${error.message}`);
-    res.status(500).json({ error: error.message });
+    const duration = Date.now() - startTime;
+    console.error(`Scraping failed after ${duration}ms: ${error.message}`);
+    
+    res.status(500).json({ 
+      error: error.message,
+      timestamp: new Date().toISOString(),
+      duration: duration
+    });
   }
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('Shutting down gracefully...');
+  if (globalBrowser) {
+    await globalBrowser.close();
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('Shutting down gracefully...');
+  if (globalBrowser) {
+    await globalBrowser.close();
+  }
+  process.exit(0);
 });
 
 app.listen(port, () => {

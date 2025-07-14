@@ -1,0 +1,21 @@
+{
+  "name": "glamira-scraper-api",
+  "version": "1.0.0",
+  "description": "API for scraping Glamira products",
+  "main": "glamira_scraper.js",
+  "scripts": {
+    "start": "glamira_scraper.js",
+    "build": "npm install && npx puppeteer browsers install chrome@latest"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "puppeteer": "^22.0.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -24,6 +24,11 @@ nixPkgs = [
 [phases.install]
 cmds = ['npm ci --only=production']
 
+[phases.build]
+cmds = [
+  'chmod -R 755 /root/.cache/puppeteer'
+]
+
 [variables]
 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'false'
 PUPPETEER_EXECUTABLE_PATH = '/nix/store/*/bin/chromium'

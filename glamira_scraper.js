@@ -12,7 +12,7 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Add request body validation middleware
+// Request body validation middleware
 app.use((req, res, next) => {
   if (req.method === 'POST' && req.is('application/json')) {
     if (!req.body || typeof req.body !== 'object') {
@@ -51,8 +51,7 @@ const getPuppeteerConfig = () => {
       '--max_old_space_size=4096'
     ],
     ignoreHTTPSErrors: true,
-    timeout: 30000,
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/app/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
+    timeout: 30000
   };
   return config;
 };
@@ -69,7 +68,7 @@ const getBrowser = async () => {
   if (browserInitializing) {
     while (browserInitializing) {
       await new Promise(resolve => setTimeout(resolve, 100));
-７
+    }
     return globalBrowser;
   }
 

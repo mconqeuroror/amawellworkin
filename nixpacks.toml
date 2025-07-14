@@ -1,7 +1,7 @@
 [phases.setup]
 nixPkgs = [
   'nodejs-18_x',
-  'chromium', 
+  'chromium',
   'nss',
   'freetype',
   'freetype-dev',
@@ -26,13 +26,13 @@ cmds = ['npm ci --only=production']
 
 [phases.build]
 cmds = [
-  'npx puppeteer browsers install chrome',
-  'chmod -R 755 /root/.cache/puppeteer'
+  'npx puppeteer browsers install chrome@127.0.6533.88', # Specify exact version
+  'chmod -R 755 /app/.cache/puppeteer' # Use /app instead of /root
 ]
 
 [variables]
 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'false'
-PUPPETEER_EXECUTABLE_PATH = '/nix/store/*/bin/chromium'
+PUPPETEER_EXECUTABLE_PATH = '/app/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome' # Exact path to Chrome binary
 NODE_ENV = 'production'
 
 [start]

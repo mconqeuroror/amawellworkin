@@ -208,39 +208,44 @@ const simulateHumanBehavior = async (page) => {
 };
 
 const detectPlaceholders = async (page) => {
-  const placeholders = [
-    {
-      type: 'main-list',
-      selector: '#maincontent > div.columns > div.column.main > div.products.wrapper.grid.products-grid > ol.products.list.items',
-      label: 'Main Product Grid',
-    },
-    {
-      type: 'carousel',
-      selector: 'div[data-content-type="products"].slick-slider, div.slider-products',
-      label: 'Product Carousel',
-    },
-  ];
+  try {
+    const placeholders = [
+      {
+        type: 'main-list',
+        selector: '#maincontent > div.columns > div.column.main > div.products.wrapper.grid.products-grid > ol.products.list.items',
+        label: 'Main Product Grid',
+      },
+      {
+        type: 'carousel',
+        selector: 'div[data-content-type="products"].slick-slider, div.slider-products',
+        label: 'Product Carousel',
+      },
+    ];
 
-  const detectedPlaceholders = [];
-  for (const placeholder of placeholders) {
-    try {
-      const elements = await page.$$(placeholder.selector);
-      if (elements.length > 0) {
-        const productCount = await page.$$eval(
-          `${placeholder.selector} li.item.product, ${placeholder.selector} .product-item-info`,
-          (items) => items.length
-        ).catch(() => 0);
-        
-        if (productCount > 0) {
-          detectedPlaceholders.push(placeholder);
-          console.log(`Found ${productCount} products in ${placeholder.label}`);
+    const detectedPlaceholders = [];
+    for (const placeholder of placeholders) {
+      try {
+        const elements = await page.$$(placeholder.selector);
+        if (elements.length > 0) {
+          const productCount = await page.$$eval(
+            `${placeholder.selector} li.item.product, ${placeholder.selector} .product-item-info`,
+            (items) => items.length
+          ).catch(() => 0);
+          
+          if (productCount > 0) {
+            detectedPlaceholders.push(placeholder);
+            console.log(`Found ${productCount} products in ${placeholder.label}`);
+          }
         }
+      } catch (error) {
+        console.warn(`Error checking placeholder ${placeholder.label}:`, error.message);
       }
-    } catch (error) {
-      console.warn(`Error checking placeholder ${placeholder.label}:`, error.message);
     }
+    return detectedPlaceholders;
+  } catch (error) {
+    console.error('Error detecting placeholders:', error);
+    return [];
   }
-  return detectedPlaceholders;
 };
 
 const scrapeProducts = async (page, html, structure, maxProducts = 10) => {
@@ -260,14 +265,14 @@ const scrapeProducts = async (page, html, structure, maxProducts = 10) => {
         const image = $(element).find('.product-image-photo, img.product-image');
 
         product.product_id = $(element).data('product-id') || productLink.data('product_id') || '';
-        product.title = productLink.text().trim() || $(element).find('.product-item-name').text().trim() || '';
+        product['product-name'] = productLink.text().trim() || $(element).find('.product-item-name').text().trim() || '';
         product.url = productLink.attr('href') || '';
         product.price = $(element).find('.price-box .price').text().trim() || '';
         product.is_new = $(element).find('.badge.is_new_msg').length > 0 ? 'Nové' : '';
 
         const uniqueKey = product.product_id || product.url;
         if (productIds.has(uniqueKey)) {
-          console.log(`Skipping duplicate product: ${product.title || uniqueKey}`);
+          console.log(`Skipping duplicate product: ${product['product-name'] || uniqueKey}`);
           continue;
         }
         productIds.add(uniqueKey);
@@ -281,9 +286,9 @@ const scrapeProducts = async (page, html, structure, maxProducts = 10) => {
           height: image.attr('height') || '',
         };
 
-        if (product.product_id || product.title || product.url) {
+        if (product.product_id || product['product-name'] || product.url) {
           products.push(product);
-          console.log(`Scraped product ${products.length}: ${product.title || product.product_id}`);
+          console.log(`Scraped product ${products.length}: ${product['product-name'] || product.product_id}`);
         } else {
           console.log(`Skipping product ${index + 1} - no essential data`);
         }

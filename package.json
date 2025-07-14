@@ -2,9 +2,9 @@
   "name": "glamira-scraper-api",
   "version": "1.0.0",
   "description": "API for scraping Glamira products",
-  "main": "glamira_scraper.js",
+  "main": "node glamira_scraper.js",
   "scripts": {
-    "start": "glamira_scraper.js",
+    "start": "node glamira_scraper.js",
     "build": "npm install && npx puppeteer browsers install chrome@latest"
   },
   "dependencies": {

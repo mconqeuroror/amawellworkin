@@ -26,13 +26,14 @@ cmds = ['npm ci --only=production']
 
 [phases.build]
 cmds = [
-  'npx puppeteer browsers install chrome@127.0.6533.88', # Specify exact version
-  'chmod -R 755 /app/.cache/puppeteer' # Use /app instead of /root
+  'npx puppeteer browsers install chrome@127.0.6533.88',
+  'ls -la /app/.cache/puppeteer', # Add this to debug
+  'chmod -R 755 /app/.cache/puppeteer'
 ]
 
 [variables]
 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'false'
-PUPPETEER_EXECUTABLE_PATH = '/app/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome' # Exact path to Chrome binary
+PUPPETEER_EXECUTABLE_PATH = '/app/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome'
 NODE_ENV = 'production'
 
 [start]

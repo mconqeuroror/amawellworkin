@@ -26,7 +26,8 @@ cmds = ['npm ci --only=production']
 
 [phases.build]
 cmds = [
-  'chmod -R 755 /root/.cache/puppeteer'
+  'npm install',
+  'npx puppeteer browsers install chrome'
 ]
 
 [variables]

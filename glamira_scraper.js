@@ -268,6 +268,16 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
+app.get('/health', (req, res) => {
+  console.log('❤️  Health check hit');    // <-- this will show up in your Railway logs
+  res.json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    memory: process.memoryUsage()
+  });
+});
+
+
 app.listen(port, () => {
   console.log(`🚀 Glamira scraper API running on port ${port}`);
 });

@@ -53,7 +53,7 @@ const getPuppeteerConfig = () => {
     ignoreHTTPSErrors: true,
     timeout: 30000
   };
- Sib  return config;
+   return config;
 };
 // Global browser management
 let globalBrowser = null;

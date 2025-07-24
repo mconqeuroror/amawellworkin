@@ -22,16 +22,19 @@ nixPkgs = [
 ]
 
 [phases.install]
-cmds = ['npm ci --only=production']
+cmds = [
+  'npm ci --only=production',
+  'npx puppeteer browsers install chrome'
+]
 
 [phases.build]
 cmds = [
-  'npm install',
-  'npx puppeteer browsers install chrome'
+  'echo "Build phase - Chrome should already be installed"'
 ]
 
 [variables]
 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'false'
+PUPPETEER_EXECUTABLE_PATH = '/app/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome'
 NODE_ENV = 'production'
 
 [start]

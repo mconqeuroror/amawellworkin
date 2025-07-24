@@ -3,6 +3,7 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const cheerio = require('cheerio');
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 
 puppeteer.use(StealthPlugin());
 
@@ -53,8 +54,14 @@ const getPuppeteerConfig = () => {
     ignoreHTTPSErrors: true,
     timeout: 30000
   };
-   return config;
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    config.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  } else {
+    config.executablePath = '/app/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome';
+  }
+  return config;
 };
+
 // Global browser management
 let globalBrowser = null;
 let browserInitializing = false;

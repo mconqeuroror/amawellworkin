@@ -56,8 +56,6 @@ const getPuppeteerConfig = () => {
   };
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     config.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-  } else {
-    config.executablePath = '/app/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome';
   }
   return config;
 };

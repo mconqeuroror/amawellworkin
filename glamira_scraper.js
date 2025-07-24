@@ -4,6 +4,7 @@ const cheerio = require('cheerio');
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 
 puppeteer.use(StealthPlugin());
 
@@ -23,8 +24,52 @@ app.use((req, res, next) => {
   next();
 });
 
+// Find Chrome executable path
+const findChromeExecutable = () => {
+  const possiblePaths = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    '/app/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable'
+  ];
+
+  for (const chromePath of possiblePaths) {
+    if (chromePath && fs.existsSync(chromePath)) {
+      console.log(`Found Chrome at: ${chromePath}`);
+      return chromePath;
+    }
+  }
+
+  // Try to find Chrome in cache directory
+  const cacheDir = '/app/.cache/puppeteer';
+  if (fs.existsSync(cacheDir)) {
+    const chromeDirectories = fs.readdirSync(cacheDir)
+      .filter(dir => dir.startsWith('chrome'))
+      .sort()
+      .reverse();
+    
+    for (const chromeDir of chromeDirectories) {
+      const chromeVersions = fs.readdirSync(path.join(cacheDir, chromeDir));
+      for (const version of chromeVersions) {
+        const chromePath = path.join(cacheDir, chromeDir, version, 'chrome-linux64', 'chrome');
+        if (fs.existsSync(chromePath)) {
+          console.log(`Found Chrome in cache at: ${chromePath}`);
+          return chromePath;
+        }
+      }
+    }
+  }
+
+  console.warn('Chrome executable not found, using default');
+  return null;
+};
+
 // Puppeteer config for Railway
 const getPuppeteerConfig = () => {
+  const executablePath = findChromeExecutable();
+  
   const config = {
     headless: 'new',
     defaultViewport: null,
@@ -54,9 +99,11 @@ const getPuppeteerConfig = () => {
     ignoreHTTPSErrors: true,
     timeout: 30000
   };
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    config.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+
+  if (executablePath) {
+    config.executablePath = executablePath;
   }
+
   return config;
 };
 
@@ -77,7 +124,9 @@ const getBrowser = async () => {
   browserInitializing = true;
   try {
     console.log('Launching new browser instance...');
-    globalBrowser = await puppeteer.launch(getPuppeteerConfig());
+    const config = getPuppeteerConfig();
+    console.log('Browser config:', { executablePath: config.executablePath });
+    globalBrowser = await puppeteer.launch(config);
     globalBrowser.on('disconnected', () => {
       console.log('Browser disconnected');
       globalBrowser = null;
@@ -401,7 +450,35 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
-    memory: process.memoryUsage()
+    memory: process.memoryUsage(),
+    chrome_path: findChromeExecutable()
+  });
+});
+
+// Debug endpoint to check Chrome installation
+app.get('/debug/chrome', (req, res) => {
+  const chromePath = findChromeExecutable();
+  const cacheDir = '/app/.cache/puppeteer';
+  let cacheContents = [];
+  
+  if (fs.existsSync(cacheDir)) {
+    try {
+      cacheContents = fs.readdirSync(cacheDir);
+    } catch (error) {
+      cacheContents = [`Error reading cache: ${error.message}`];
+    }
+  }
+
+  res.json({
+    chrome_executable: chromePath,
+    cache_directory: cacheDir,
+    cache_exists: fs.existsSync(cacheDir),
+    cache_contents: cacheContents,
+    env_vars: {
+      PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH,
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD,
+      NODE_ENV: process.env.NODE_ENV
+    }
   });
 });
 
@@ -448,4 +525,5 @@ process.on('SIGTERM', async () => {
 
 app.listen(port, () => {
   console.log(`Glamira scraper API running at http://localhost:${port}`);
+  console.log(`Chrome executable: ${findChromeExecutable()}`);
 });

@@ -53,12 +53,8 @@ const getPuppeteerConfig = () => {
     ignoreHTTPSErrors: true,
     timeout: 30000
   };
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    config.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-  }
-  return config;
+ Sib  return config;
 };
-
 // Global browser management
 let globalBrowser = null;
 let browserInitializing = false;

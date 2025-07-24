@@ -1,41 +1,27 @@
+# nixpacks.toml
+
 [phases.setup]
 nixPkgs = [
-  'nodejs-18_x',
-  'chromium',
-  'nss',
-  'freetype',
-  'freetype-dev',
-  'harfbuzz',
-  'ca-certificates',
-  'ttf-freefont',
-  'fontconfig',
-  'wqy_zenhei',
-  'glib',
-  'gtk3',
-  'libdrm',
-  'libxcomposite',
-  'libxdamage',
-  'libxrandr',
-  'libgbm',
-  'libxss',
-  'libasound2'
+  "nodejs-18_x",
+  "chromium",
+  "nss",
+  "freetype",
+  "harfbuzz",
+  "ca-certificates",
+  "ttf-freefont",
+  "fontconfig"
 ]
-
-[phases.install]
-cmds = [
-  'npm ci --only=production',
-  'npx puppeteer browsers install chrome'
-]
+cmds = ["npm ci --only=production"]
 
 [phases.build]
-cmds = [
-  'echo "Build phase - Chrome should already be installed"'
-]
+# No extra build steps—use system Chromium
+cmds = []
 
 [variables]
-PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'false'
-PUPPETEER_EXECUTABLE_PATH = '/app/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome'
-NODE_ENV = 'production'
+# Tell Puppeteer to use system Chromium and skip its download
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
+PUPPETEER_EXECUTABLE_PATH = "chromium"
+NODE_ENV = "production"
 
 [start]
-cmd = 'node glamira_scraper.js'
+cmd = "node glamira_scraper.js"

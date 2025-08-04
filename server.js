@@ -1,464 +1,478 @@
-const puppeteer = require('puppeteer');
-const cheerio = require('cheerio');
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
+const helmet = require('helmet');
+const compression = require('compression');
+const { RateLimiterMemory } = require('rate-limiter-flexible');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const cheerio = require('cheerio');
 const path = require('path');
 
+// Configure puppeteer with stealth plugin
+puppeteer.use(StealthPlugin());
+
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors());
+// Security middleware
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP for API server
+}));
+app.use(compression());
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' ? false : true,
+  credentials: true
+}));
+
+// Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Request validation
-app.use((req, res, next) => {
-  if (req.method === 'POST' && req.is('application/json')) {
-    if (!req.body || typeof req.body !== 'object') {
-      return res.status(400).json({ error: 'Invalid JSON in request body' });
-    }
-  }
-  next();
+// Rate limiting
+const rateLimiter = new RateLimiterMemory({
+  keyGenerator: (req) => req.ip,
+  points: 10, // Number of requests
+  duration: 60, // Per 60 seconds
 });
 
-// Chrome executable finder
-const findChromeExecutable = () => {
-  const possiblePaths = [
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
-    process.env.PUPPETEER_EXECUTABLE_PATH,
-    process.env.CHROME_BIN
-  ];
-
-  for (const chromePath of possiblePaths) {
-    if (chromePath && fs.existsSync(chromePath)) {
-      console.log(`✅ Found Chrome at: ${chromePath}`);
-      return chromePath;
-    }
-  }
-
-  // Check Puppeteer cache
-  const cacheDir = '/app/.cache/puppeteer';
-  if (fs.existsSync(cacheDir)) {
-    try {
-      const findChrome = (dir) => {
-        const items = fs.readdirSync(dir);
-        for (const item of items) {
-          const fullPath = path.join(dir, item);
-          const stat = fs.statSync(fullPath);
-          if (stat.isDirectory()) {
-            const result = findChrome(fullPath);
-            if (result) return result;
-          } else if (item === 'chrome' || item === 'chromium') {
-            return fullPath;
-          }
-        }
-        return null;
-      };
-      
-      const chromeInCache = findChrome(cacheDir);
-      if (chromeInCache) {
-        console.log(`✅ Found Chrome in cache: ${chromeInCache}`);
-        return chromeInCache;
-      }
-    } catch (error) {
-      console.warn('⚠️ Error searching cache:', error.message);
-    }
-  }
-
-  console.warn('⚠️ Chrome executable not found, using system default');
-  return null;
-};
-
-// Puppeteer configuration
-const getPuppeteerConfig = () => {
-  const executablePath = findChromeExecutable();
-  
-  return {
-    headless: 'new',
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--disable-gpu',
-      '--disable-web-security',
-      '--disable-features=VizDisplayCompositor',
-      '--disable-extensions',
-      '--disable-plugins',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      '--disable-features=TranslateUI',
-      '--disable-ipc-flooding-protection',
-      '--window-size=1920,1080',
-      '--disable-blink-features=AutomationControlled'
-    ],
-    executablePath: executablePath || undefined,
-    ignoreHTTPSErrors: true,
-    timeout: 30000
-  };
-};
-
-// Global browser management
-let globalBrowser = null;
-
-const getBrowser = async () => {
-  if (globalBrowser && globalBrowser.connected) {
-    return globalBrowser;
-  }
-  
-  console.log('🚀 Launching browser...');
-  const config = getPuppeteerConfig();
-  console.log('🔧 Browser config:', { 
-    executablePath: config.executablePath,
-    headless: config.headless 
-  });
-  
-  globalBrowser = await puppeteer.launch(config);
-  
-  globalBrowser.on('disconnected', () => {
-    console.log('🔌 Browser disconnected');
-    globalBrowser = null;
-  });
-  
-  console.log('✅ Browser launched successfully');
-  return globalBrowser;
-};
-
-// Utility functions
-const getRandomUserAgent = () => {
-  const userAgents = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-  ];
-  return userAgents[Math.floor(Math.random() * userAgents.length)];
-};
-
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-const isValidUrl = (url) => {
+const rateLimiterMiddleware = async (req, res, next) => {
   try {
-    new URL(url);
-    return url.includes('glamira.sk');
-  } catch {
-    return false;
-  }
-};
-
-// Cookie consent handler
-const handleCookieConsent = async (page) => {
-  try {
-    await page.waitForSelector('aside[data-role="gdpr-cookie-container"]', { timeout: 3000 });
-    console.log('🍪 Cookie bar detected, handling...');
-    
-    await page.evaluate(() => {
-      const button = document.querySelector('button[data-amgdprcookie-js="accept"]');
-      if (button) {
-        button.click();
-        return true;
-      }
-      return false;
+    await rateLimiter.consume(req.ip);
+    next();
+  } catch (rejRes) {
+    res.status(429).json({
+      error: 'Too many requests',
+      retryAfter: Math.round(rejRes.msBeforeNext / 1000)
     });
-    
-    await delay(1000);
-    console.log('✅ Cookie consent handled');
-  } catch {
-    console.log('ℹ️ No cookie bar detected');
   }
 };
 
-// Product detection and scraping
-const detectProductStructures = async (page) => {
-  const structures = [
-    { 
-      type: 'main-grid', 
-      selector: '.products.list.items .product-item',
-      label: 'Main Product Grid' 
-    },
-    { 
-      type: 'carousel', 
-      selector: '.slick-slider .product-item',
-      label: 'Product Carousel' 
-    },
-    { 
-      type: 'featured', 
-      selector: '[data-content-type="products"] .product-item',
-      label: 'Featured Products' 
-    }
-  ];
-  
-  const detected = [];
-  
-  for (const structure of structures) {
-    try {
-      const elements = await page.$$(structure.selector);
-      if (elements.length > 0) {
-        console.log(`✅ Found ${elements.length} products in ${structure.label}`);
-        detected.push(structure);
-      }
-    } catch (error) {
-      console.warn(`⚠️ Error checking ${structure.label}:`, error.message);
-    }
-  }
-  
-  return detected;
-};
-
-const scrapeProducts = (html, structure, maxProducts = 20) => {
-  const $ = cheerio.load(html);
-  const products = [];
-  const productItems = $(structure.selector).slice(0, maxProducts);
-  
-  console.log(`🔍 Scraping ${productItems.length} products from ${structure.label}`);
-  
-  productItems.each((index, element) => {
-    try {
-      const $element = $(element);
-      
-      // Basic product info
-      const titleElement = $element.find('.product-item-name a, .product-name a, a[title]').first();
-      const title = titleElement.attr('title') || titleElement.text().trim();
-      const url = titleElement.attr('href') || '';
-      
-      if (!title && !url) return; // Skip if no basic info
-      
-      const product = {
-        title: title,
-        url: url,
-        placeholder: structure.label
-      };
-      
-      // Product ID
-      product.product_id = $element.find('[data-product-id]').data('product-id') || 
-                          titleElement.data('product-id') || '';
-      
-      // Price information
-      const priceElement = $element.find('.price, .price-box .price').first();
-      product.price = priceElement.text().trim() || '';
-      
-      // Image
-      const imageElement = $element.find('.product-image-photo, img.product-image').first();
-      product.image = {
-        src: imageElement.attr('src') || '',
-        alt: imageElement.attr('alt') || '',
-        srcset: imageElement.attr('srcset') || ''
-      };
-      
-      // Additional info
-      product.description = $element.find('.product-item-description, .short-description').text().trim() || '';
-      product.is_new = $element.find('.badge, .new-label').length > 0;
-      
-      // Carat info if available
-      product.carat = $element.find('.carat, .info_stone_total').text().trim() || '';
-      
-      // Variants/options
-      const moreLink = $element.find('.option-more a, .view-more').first();
-      product.more_variants = {
-        count: moreLink.find('span').text().trim() || '',
-        url: moreLink.attr('href') || ''
-      };
-      
-      products.push(product);
-      
-    } catch (error) {
-      console.warn(`⚠️ Error scraping product ${index}:`, error.message);
-    }
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
   });
-  
-  return products;
-};
+});
 
-// Main scraping function
-const scrapeGlamira = async (targetUrl) => {
-  if (!isValidUrl(targetUrl)) {
-    throw new Error('Invalid Glamira URL provided');
+// Main scraping endpoint
+app.post('/api/scrape', rateLimiterMiddleware, async (req, res) => {
+  const { url, maxProducts = 10 } = req.body;
+
+  // Validate input
+  if (!url) {
+    return res.status(400).json({ error: 'URL is required' });
   }
-  
-  let page = null;
-  
+
+  if (!isValidUrl(url) || !url.includes('amawell.sk')) {
+    return res.status(400).json({ error: 'Invalid Amawell URL' });
+  }
+
+  if (maxProducts < 1 || maxProducts > 50) {
+    return res.status(400).json({ error: 'maxProducts must be between 1 and 50' });
+  }
+
+  let browser = null;
+  const startTime = Date.now();
+
   try {
-    const browser = await getBrowser();
-    page = await browser.newPage();
+    console.log(`Starting scrape for URL: ${url}`);
     
-    // Configure page
+    // Launch browser with Railway-optimized settings
+    browser = await puppeteer.launch({
+      headless: 'new',
+      executablePath: process.env.NODE_ENV === 'production' ? '/usr/bin/chromium-browser' : undefined,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-features=TranslateUI',
+        '--disable-ipc-flooding-protection',
+        '--disable-default-apps',
+        '--disable-extensions',
+        '--disable-plugins',
+        '--disable-images',
+        '--disable-javascript',
+        '--disable-web-security',
+        '--disable-features=VizDisplayCompositor',
+        '--disable-software-rasterizer',
+        '--disable-background-networking',
+        '--disable-sync',
+        '--disable-translate',
+        '--hide-scrollbars',
+        '--mute-audio',
+        '--no-default-browser-check',
+        '--no-pings',
+        '--no-zygote',
+        '--single-process',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-features=TranslateUI',
+        '--disable-ipc-flooding-protection',
+        '--disable-default-apps',
+        '--disable-extensions',
+        '--disable-plugins',
+        '--disable-images',
+        '--disable-javascript',
+        '--disable-web-security',
+        '--disable-features=VizDisplayCompositor',
+        '--disable-software-rasterizer',
+        '--disable-background-networking',
+        '--disable-sync',
+        '--disable-translate',
+        '--hide-scrollbars',
+        '--mute-audio',
+        '--no-default-browser-check',
+        '--no-pings',
+        '--no-zygote',
+        '--single-process'
+      ],
+      ignoreHTTPSErrors: true,
+      ignoreDefaultArgs: ['--disable-extensions'],
+    });
+
+    const page = await browser.newPage();
+    
+    // Set user agent and viewport
     await page.setUserAgent(getRandomUserAgent());
-    await page.setViewport({ width: 1920, height: 1080 });
-    
-    // Block unnecessary resources
+    await page.setViewport(getRandomViewport());
+
+    // Block unnecessary requests
     await page.setRequestInterception(true);
     page.on('request', (request) => {
-      const resourceType = request.resourceType();
-      const blockTypes = ['image', 'stylesheet', 'font', 'media'];
-      const blockDomains = ['google-analytics.com', 'googletagmanager.com', 'doubleclick.net'];
-      
-      if (blockTypes.includes(resourceType) || 
-          blockDomains.some(domain => request.url().includes(domain))) {
+      const blockDomains = [
+        'demdex.net', '1rx.io', 'agkn.com', 'criteo.com', 
+        'adobe.com', 'doubleclick.net', 'google-analytics.com',
+        'googletagmanager.com', 'facebook.com', 'twitter.com'
+      ];
+      if (blockDomains.some((domain) => request.url().includes(domain))) {
         request.abort();
       } else {
         request.continue();
       }
     });
-    
-    console.log(`🌐 Navigating to: ${targetUrl}`);
-    await page.goto(targetUrl, { 
-      waitUntil: 'networkidle0', 
+
+    // Navigate to the URL
+    await page.goto(url, { 
+      waitUntil: 'domcontentloaded', 
       timeout: 30000 
     });
-    
+
     // Handle cookie consent
     await handleCookieConsent(page);
-    
-    // Wait for products to load
-    console.log('⏳ Waiting for products to load...');
-    await page.waitForSelector('.product-item, .product', { timeout: 15000 });
-    
+
+    // Check for CAPTCHA
+    if (await checkForCaptcha(page)) {
+      throw new Error('CAPTCHA detected');
+    }
+
+    // Simulate human behavior
+    await simulateHumanBehavior(page);
+
     // Scroll to load more content
     for (let i = 0; i < 3; i++) {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await delay(2000);
     }
-    
-    // Detect and scrape products
-    const structures = await detectProductStructures(page);
-    
-    if (structures.length === 0) {
-      throw new Error('No product structures detected on the page');
-    }
-    
-    const html = await page.content();
-    let allProducts = [];
-    
-    for (const structure of structures) {
-      const products = scrapeProducts(html, structure, 20);
-      allProducts = [...allProducts, ...products];
-    }
-    
-    // Remove duplicates based on URL or title
-    const uniqueProducts = allProducts.filter((product, index, arr) => 
-      arr.findIndex(p => p.url === product.url || p.title === product.title) === index
-    );
-    
-    console.log(`✅ Successfully scraped ${uniqueProducts.length} unique products`);
-    
-    return {
-      scraped_url: targetUrl,
-      total_products: uniqueProducts.length,
-      products: uniqueProducts,
-      timestamp: new Date().toISOString(),
-      success: true
-    };
-    
-  } catch (error) {
-    console.error('❌ Scraping failed:', error.message);
-    throw error;
-  } finally {
-    if (page && !page.isClosed()) {
-      await page.close();
-    }
-  }
-};
 
-// API Routes
-app.get('/', (req, res) => {
-  res.json({
-    name: 'Glamira Scraper API',
-    version: '1.0.0',
-    status: 'running',
-    endpoints: {
-      health: 'GET /health',
-      debug: 'GET /debug',
-      scrape: 'POST /scrape'
-    }
-  });
-});
+    // Scrape products
+    const products = await scrapeAllPlaceholders(page, maxProducts);
+    
+    const endTime = Date.now();
+    const duration = endTime - startTime;
 
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    chrome_path: findChromeExecutable(),
-    node_version: process.version
-  });
-});
-
-app.get('/debug', (req, res) => {
-  const chromePath = findChromeExecutable();
-  const cacheDir = '/app/.cache/puppeteer';
-  let cacheInfo = { exists: false, contents: [] };
-  
-  if (fs.existsSync(cacheDir)) {
-    try {
-      cacheInfo = {
-        exists: true,
-        contents: fs.readdirSync(cacheDir)
-      };
-    } catch (error) {
-      cacheInfo.error = error.message;
-    }
-  }
-  
-  res.json({
-    chrome_executable: chromePath,
-    cache_directory: cacheInfo,
-    environment: {
-      NODE_ENV: process.env.NODE_ENV,
-      PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH,
-      CHROME_BIN: process.env.CHROME_BIN,
-      PORT: process.env.PORT
-    },
-    puppeteer_config: getPuppeteerConfig()
-  });
-});
-
-app.post('/scrape', async (req, res) => {
-  const startTime = Date.now();
-  
-  try {
-    const { url } = req.body;
-    
-    if (!url) {
-      return res.status(400).json({
-        error: 'URL is required in request body',
-        example: { url: 'https://www.glamira.sk/sperky-zvyk/' }
-      });
-    }
-    
-    console.log(`🎯 Scraping request for: ${url}`);
-    
-    const result = await scrapeGlamira(url);
-    const duration = Date.now() - startTime;
-    
     res.json({
-      ...result,
-      duration_ms: duration
+      success: true,
+      data: {
+        scrapedUrl: url,
+        products: products,
+        totalProducts: products.length,
+        maxProducts: maxProducts,
+        duration: `${duration}ms`
+      },
+      timestamp: new Date().toISOString()
     });
-    
+
   } catch (error) {
-    const duration = Date.now() - startTime;
-    console.error('❌ Scraping error:', error.message);
-    
+    console.error('Scraping error:', error);
     res.status(500).json({
+      success: false,
       error: error.message,
-      timestamp: new Date().toISOString(),
-      duration_ms: duration,
-      success: false
+      timestamp: new Date().toISOString()
     });
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
   }
 });
 
-// Error handling
+// Utility functions
+function getRandomUserAgent() {
+  const userAgents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+  ];
+  return userAgents[Math.floor(Math.random() * userAgents.length)];
+}
+
+function getRandomViewport() {
+  const viewports = [
+    { width: 1280, height: 800 },
+    { width: 1366, height: 768 },
+    { width: 1920, height: 1080 },
+  ];
+  return viewports[Math.floor(Math.random() * viewports.length)];
+}
+
+function isValidUrl(url) {
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function handleCookieConsent(page) {
+  const cookieSelectors = [
+    '#btn-cookie-allow',
+    '.cookie-notice__btn--accept',
+    'button.accept-cookies',
+  ];
+
+  try {
+    await page.waitForSelector('.cookie-notice, .cookie-consent, #cookie-notice', { timeout: 3000 });
+    console.log('Cookie notice detected.');
+  } catch {
+    console.log('No cookie notice detected.');
+    return;
+  }
+
+  try {
+    await page.evaluate(() => {
+      const notice = document.querySelector('.cookie-notice, .cookie-consent, #cookie-notice');
+      if (notice) notice.style.display = 'none';
+      const button = document.querySelector('#btn-cookie-allow');
+      if (button) {
+        button.removeAttribute('disabled');
+        button.click();
+      }
+    });
+    await delay(1000);
+  } catch (error) {
+    console.warn(`Failed to handle cookie consent: ${error.message}`);
+  }
+}
+
+async function checkForCaptcha(page) {
+  const captchaSelectors = [
+    'div.g-recaptcha[style*="visibility: visible"]',
+    'div[class*="captcha"][style*="display: block"]',
+    '#recaptcha[style*="visibility: visible"]',
+  ];
+  for (const selector of captchaSelectors) {
+    if (await page.$(selector)) {
+      console.warn(`CAPTCHA detected with selector: ${selector}`);
+      return true;
+    }
+  }
+  return false;
+}
+
+async function simulateHumanBehavior(page) {
+  try {
+    await page.mouse.move(Math.random() * 300, Math.random() * 300);
+    await page.evaluate(() => window.scrollBy(0, 200));
+    console.log('Simulated human behavior.');
+  } catch (error) {
+    console.warn(`Failed to simulate human behavior: ${error.message}`);
+  }
+}
+
+async function detectPlaceholders(page) {
+  const placeholders = [
+    {
+      type: 'main-list',
+      selector: '#amasty-shopby-product-list > div.products.wrapper.grid.products-grid > ol',
+      label: 'Main Product Grid',
+    },
+  ];
+
+  const detectedPlaceholders = [];
+  for (const placeholder of placeholders) {
+    const elements = await page.$$(placeholder.selector);
+    if (elements.length > 0) {
+      const productCount = await page.$$eval(
+        `${placeholder.selector} li.item.product`,
+        (items) => items.length
+      );
+      if (productCount > 0) {
+        detectedPlaceholders.push(placeholder);
+      }
+    }
+  }
+
+  return detectedPlaceholders;
+}
+
+async function scrapeProductDetails(page, productUrl) {
+  try {
+    await page.goto(productUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    console.log(`Navigated to product page: ${productUrl}`);
+
+    if (await checkForCaptcha(page)) {
+      throw new Error(`CAPTCHA detected on product page: ${productUrl}`);
+    }
+
+    await handleCookieConsent(page);
+    await simulateHumanBehavior(page);
+
+    await page.waitForSelector('.additional-attributes-wrapper', { timeout: 5000 }).catch(() => {
+      console.warn(`Additional attributes table not found on ${productUrl}`);
+    });
+
+    const html = await page.content();
+    const $ = cheerio.load(html);
+
+    const productDetails = {};
+
+    productDetails['product-name'] = $('.page-title .base').text().trim() || '';
+    productDetails.price = $('.price-final_price .price')
+      .text()
+      .trim()
+      .replace(/\s*€\s*/, '') || '';
+    productDetails['stock-status'] = $('.stock.available .stock-available-wrapper span')
+      .text()
+      .trim() || '';
+    productDetails['delivery-info'] = $('.stock-available-info').text().trim() || '';
+    productDetails.sku = $('.product.attribute.sku .value').text().trim() || '';
+
+    const attributeTable = $('.additional-attributes-wrapper table tbody tr');
+    attributeTable.each((index, element) => {
+      const key = $(element).find('th').text().trim();
+      const value = $(element).find('td').text().trim();
+      if (key && value) {
+        const safeKey = key
+          .toLowerCase()
+          .replace(/[\s()]/g, '_')
+          .replace(/[^a-z0-9_]/g, '');
+        productDetails[safeKey] = value;
+      }
+    });
+
+    return productDetails;
+  } catch (error) {
+    console.warn(`Failed to scrape product details from ${productUrl}: ${error.message}`);
+    return {};
+  }
+}
+
+async function scrapeProducts(page, html, structure, maxProducts) {
+  const $ = cheerio.load(html);
+  const products = [];
+
+  const productItems = $(structure.selector)
+    .find('li.item.product')
+    .slice(0, maxProducts);
+
+  if (productItems.length === 0) {
+    return products;
+  }
+
+  for (let index = 0; index < productItems.length; index++) {
+    const element = productItems[index];
+    const product = { placeholder: structure.label };
+    const productLink = $(element).find('a.product-item-link');
+    const imageContainer = $(element).find('.hover-image-container.product-image-container');
+    const image = $(element).find('.product-image-photo');
+
+    product.product_id = imageContainer
+      .attr('class')
+      ?.match(/product-image-container-(\d+)/)?.[1] || '';
+    product['product-name'] = productLink.text().trim() || '';
+    product.url = productLink.attr('href') || '';
+    product.price = $(element).find('.price').text().trim() || '';
+    product.is_new = $(element).find('.prolabels-wrapper .label-new').length > 0 ? 'Nové' : '';
+
+    product.image = {
+      src: image.attr('src') || '',
+      srcset: image.attr('srcset') || '',
+      sizes: image.attr('sizes') || '',
+      alt: image.attr('alt') || '',
+      width: image.attr('width') || '',
+      height: image.attr('height') || '',
+    };
+
+    if (!product.product_id && !product['product-name'] && !product.url) {
+      continue;
+    }
+
+    if (product.url && isValidUrl(product.url)) {
+      console.log(`Scraping details for product: ${product['product-name'] || product.product_id}`);
+      const details = await scrapeProductDetails(page, product.url);
+      Object.assign(product, details);
+    }
+
+    products.push(product);
+    await delay(1000);
+
+    if (products.length >= maxProducts) break;
+  }
+
+  return products;
+}
+
+async function scrapeAllPlaceholders(page, maxProducts) {
+  const placeholders = await detectPlaceholders(page);
+  if (placeholders.length === 0) {
+    console.warn('No valid placeholders with products found.');
+    return [];
+  }
+
+  let allProducts = [];
+
+  for (const structure of placeholders) {
+    console.log(`Processing placeholder: ${structure.label}`);
+    let products = [];
+
+    await page.waitForSelector(structure.selector, { timeout: 10000 }).catch(() => {
+      console.warn(`Placeholder ${structure.label} not found within 10 seconds.`);
+    });
+    
+    let html = await page.content();
+    products = await scrapeProducts(page, html, structure, maxProducts);
+    
+    if (products.length >= maxProducts) {
+      allProducts = [...allProducts, ...products.slice(0, maxProducts)];
+      break;
+    }
+
+    allProducts = [...allProducts, ...products];
+  }
+
+  return allProducts.slice(0, maxProducts);
+}
+
+// Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('💥 Unhandled error:', err);
+  console.error('Unhandled error:', err);
   res.status(500).json({
+    success: false,
     error: 'Internal server error',
     timestamp: new Date().toISOString()
   });
@@ -467,35 +481,26 @@ app.use((err, req, res, next) => {
 // 404 handler
 app.use('*', (req, res) => {
   res.status(404).json({
+    success: false,
     error: 'Endpoint not found',
-    available_endpoints: ['/', '/health', '/debug', '/scrape']
+    timestamp: new Date().toISOString()
   });
 });
 
-// Graceful shutdown
-const gracefulShutdown = async (signal) => {
-  console.log(`📴 Received ${signal}, shutting down gracefully...`);
-  
-  if (globalBrowser) {
-    try {
-      await globalBrowser.close();
-      console.log('✅ Browser closed successfully');
-    } catch (error) {
-      console.error('❌ Error closing browser:', error.message);
-    }
-  }
-  
-  process.exit(0);
-};
-
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
 // Start server
-app.listen(port, () => {
-  console.log(`🚀 Glamira Scraper API running on port ${port}`);
-  console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🎯 Chrome executable: ${findChromeExecutable() || 'system default'}`);
-  console.log(`📱 Health check: http://localhost:${port}/health`);
-  console.log(`🔍 Debug info: http://localhost:${port}/debug`);
+app.listen(PORT, () => {
+  console.log(`Amawell scraper server running on port ${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`Scrape endpoint: POST http://localhost:${PORT}/api/scrape`);
 });
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  process.exit(0);
+}); 

@@ -1,24 +1,7 @@
 [phases.setup]
 nixPkgs = [
   "chromium",
-  "cacert",
-  "glib",
-  "nss",
-  "nspr",
-  "atk",
-  "at-spi2-atk",
-  "libdrm",
-  "libxkbcommon",
-  "libxcomposite",
-  "libxdamage",
-  "libxrandr",
-  "libgbm",
-  "alsa-lib",
-  "pango",
-  "cairo",
-  "at-spi2-core",
-  "gtk3",
-  "gdk-pixbuf"
+  "cacert"
 ]
 
 [phases.install]

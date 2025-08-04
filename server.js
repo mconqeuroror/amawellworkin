@@ -82,7 +82,6 @@ app.post('/api/scrape', rateLimiterMiddleware, async (req, res) => {
     // Launch browser with Railway-optimized settings
     browser = await puppeteer.launch({
       headless: 'new',
-      executablePath: process.env.NODE_ENV === 'production' ? '/usr/bin/chromium-browser' : undefined,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',

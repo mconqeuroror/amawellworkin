@@ -1,6 +1,6 @@
 [phases.install]
 cmds = [
-  "npm ci --only=production"
+  "npm ci --omit=dev"
 ]
 
 [phases.build]

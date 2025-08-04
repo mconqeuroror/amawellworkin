@@ -1,7 +1,6 @@
 [phases.setup]
 nixPkgs = [
-  "chromium",
-  "cacert"
+  "chromium"
 ]
 
 [phases.install]

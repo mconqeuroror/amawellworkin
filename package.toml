@@ -1,0 +1,28 @@
+[phases.setup]
+nixPkgs = [
+  'nodejs-18_x',
+  'chromium',
+  'nss',
+  'freetype',
+  'freetype-dev',
+  'harfbuzz',
+  'ca-certificates',
+  'ttf-freefont',
+  'fontconfig',
+  'wqy_zenhei'
+]
+
+[phases.install]
+cmds = [
+  'npm ci --only=production',
+  'npx @puppeteer/browsers install chrome@stable --path /app/.cache/puppeteer'
+]
+
+[variables]
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true'
+PUPPETEER_EXECUTABLE_PATH = '/usr/bin/chromium'
+CHROME_BIN = '/usr/bin/chromium'
+NODE_ENV = 'production'
+
+[start]
+cmd = 'node server.js'

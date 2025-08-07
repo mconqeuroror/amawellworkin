@@ -49,6 +49,7 @@ const rateLimiterMiddleware = async (req, res, next) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
+  console.log(`[HEALTH] /health endpoint hit at ${new Date().toISOString()}`);
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
@@ -491,15 +492,21 @@ app.listen(PORT, () => {
   console.log(`Amawell scraper server running on port ${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
   console.log(`Scrape endpoint: POST http://localhost:${PORT}/api/scrape`);
+
+  // Periodic memory usage logging
+  setInterval(() => {
+    const used = process.memoryUsage().rss / 1024 / 1024;
+    console.log(`[MEMORY] RSS memory usage: ${used.toFixed(2)} MB at ${new Date().toISOString()}`);
+  }, 60000);
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
+  console.log(`[SHUTDOWN] SIGTERM received at ${new Date().toISOString()}, shutting down gracefully`);
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
+  console.log(`[SHUTDOWN] SIGINT received at ${new Date().toISOString()}, shutting down gracefully`);
   process.exit(0);
 }); 
